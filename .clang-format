@@ -4,4 +4,8 @@ BasedOnStyle: LLVM
 IndentWidth: 4
 TabWidth: 4
 ColumnLimit: 0
+AlignAfterOpenBracket: true
+AlignConsecutiveDeclarations: true
+AlignConsecutiveAssignments: true
+BreakBeforeBraces: Stroustrup
 ...
