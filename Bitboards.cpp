@@ -1,6 +1,7 @@
 #include <array>
 #include <bit>
 #include <byteswap.h>
+#include <cassert>
 #include <chrono>
 #include <cstdint>
 #include <format>
@@ -30,15 +31,36 @@ static constexpr uint64_t FILE_F      = 0x2020202020202020ULL;
 static constexpr uint64_t FILE_G      = 0x4040404040404040ULL;
 static constexpr uint64_t FILE_H      = 0x8080808080808080ULL;
 
-static std::array<uint64_t, 64> KNIGHT_ATTACKS{};
-static std::array<uint64_t, 64> DIAG;
-static std::array<uint64_t, 64> ANTIDIAG;
-static std::array<uint64_t, 8>  RANKS = {RANK_1, RANK_2, RANK_3, RANK_4, RANK_5, RANK_6, RANK_7, RANK_8};
-static std::array<uint64_t, 8>  FILES = {FILE_A, FILE_B, FILE_C, FILE_D, FILE_E, FILE_F, FILE_G, FILE_H};
+static std::array<uint64_t, 64>               KNIGHT_ATTACKS{};
+static std::array<uint64_t, 64>               DIAG;
+static std::array<uint64_t, 64>               ANTIDIAG;
+static std::array<std::array<uint8_t, 64>, 8> FIRST_RANK_ATTACKS{};
+static std::array<uint64_t, 8>                RANKS = {RANK_1, RANK_2, RANK_3, RANK_4, RANK_5, RANK_6, RANK_7, RANK_8};
+static std::array<uint64_t, 8>                FILES = {FILE_A, FILE_B, FILE_C, FILE_D, FILE_E, FILE_F, FILE_G, FILE_H};
 
 constexpr static bool OnBoard(int col, int row)
 {
     return col >= 0 && col < 8 && row >= 0 && row < 8;
+}
+
+static void InitFirstRankAttacks()
+{
+    for (int col = 0; col < 8; col++)
+        for (int rocc = 0; rocc < 64; rocc++) {
+            const auto occ = uint8_t(rocc) << 1;
+            auto       atk = 0;
+            for (int c = col + 1; c < 8; c++) {
+                atk |= 1u << c;
+                if (occ & (1u << c))
+                    break;
+            }
+            for (int c = col - 1; c >= 0; c--) {
+                atk |= 1u << c;
+                if (occ & (1u << c))
+                    break;
+            }
+            FIRST_RANK_ATTACKS[col][rocc] = atk;
+        }
 }
 
 static void InitDiag()
@@ -115,10 +137,29 @@ static uint64_t LineAttacks(uint64_t occ, uint64_t mask, uint64_t r)
     return (fwd ^ rev) & mask;
 }
 
+static uint64_t RankAttacks(uint64_t sq, uint64_t occ)
+{
+    const auto col  = ColOf(sq);
+    const auto row  = RowOf(sq);
+    const auto rocc = (occ >> (row * 8)) & 0xFF; // full 8-bit occupancy for that rank
+    return (uint64_t(FIRST_RANK_ATTACKS[col][rocc]) << (row * 8));
+}
+
 static uint64_t BishopAttacks(int sq, uint64_t occ)
 {
     const auto r = 1ULL << sq;
     return LineAttacks(occ, DIAG[sq], r) | LineAttacks(occ, ANTIDIAG[sq], r);
+}
+
+static uint64_t RookAttacks(int sq, uint64_t occ)
+{
+    const auto r = 1ULL << sq;
+    return LineAttacks(occ, FILES[ColOf(sq)], r) | RankAttacks(sq, occ);
+}
+
+static uint64_t QueenAttacks(int sq, uint64_t occ)
+{
+    return BishopAttacks(sq, occ) | RookAttacks(sq, occ);
 }
 
 struct Move {
@@ -243,6 +284,22 @@ static int GenerateMoves(Position &p, std::array<Move, MAX_MOVES> &moves)
             emit(from, PopLsb(targets), BISHOP);
     }
 
+    auto rooks = p.bitboards[mycolor][ROOK];
+    while (rooks) {
+        auto from    = PopLsb(rooks);
+        auto targets = RookAttacks(from, all) & ~p.occupancy[mycolor];
+        while (targets)
+            emit(from, PopLsb(targets), ROOK);
+    }
+
+    auto queens = p.bitboards[mycolor][QUEEN];
+    while (queens) {
+        auto from    = PopLsb(queens);
+        auto targets = QueenAttacks(from, all) & ~p.occupancy[mycolor];
+        while (targets)
+            emit(from, PopLsb(targets), QUEEN);
+    }
+
     return index;
 }
 
@@ -269,8 +326,14 @@ static uint64_t Perft(Position &p, int depth)
 
 int main()
 {
+    InitFirstRankAttacks();
     InitKnightAttacks();
     InitDiag();
+
+    assert(FIRST_RANK_ATTACKS[4][0] == 0b11101111);
+    assert(FIRST_RANK_ATTACKS[4][0b000010] == 0b11101100);
+    assert(FIRST_RANK_ATTACKS[4][0b000001] == 0b11101110);
+    assert(FIRST_RANK_ATTACKS[0][0b000001] == 0b00000010);
 
     for (int i = 1; i <= PERFT_DEPTH; i++) {
         auto       p       = CreateDefaultPosition();
