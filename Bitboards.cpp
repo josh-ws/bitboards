@@ -6,14 +6,13 @@
 #include <cstdint>
 #include <format>
 #include <iostream>
-#include <vector>
 
 inline constexpr uint64_t BitOf(uint8_t col, uint8_t row) { return 1ULL << (row * 8 + col); }
 inline constexpr int      ColOf(int bit) { return bit & 7; }
 inline constexpr int      RowOf(int bit) { return bit >> 3; }
 
 static constexpr int      MAX_MOVES   = 218; // https://chess.stackexchange.com/questions/4490/maximum-possible-movement-in-a-turn
-static constexpr int      PERFT_DEPTH = 7;
+static constexpr int      PERFT_DEPTH = 6;
 static constexpr uint64_t RANK_1      = 0x00000000000000FFULL;
 static constexpr uint64_t RANK_2      = 0x000000000000FF00ULL;
 static constexpr uint64_t RANK_3      = 0x0000000000FF0000ULL;
@@ -242,6 +241,70 @@ static void UndoMove(Position &)
 {
 }
 
+static bool IsCheck(const Position &p, uint8_t color)
+{
+    const auto mycolor    = color;
+    const auto theircolor = color ^ 1;
+    const auto bitboard   = p.bitboards[mycolor][KING];
+    const auto all        = p.occupancy[WHITE] | p.occupancy[BLACK];
+
+    const auto pawns = p.bitboards[mycolor][PAWN];
+    if (mycolor == WHITE) {
+        auto capR = (pawns << 9) & ~FILE_A;
+        auto capL = (pawns << 7) & ~FILE_H;
+        if ((capR & bitboard) || (capL & bitboard))
+            return true;
+    }
+    else {
+        auto capR = (pawns >> 9) & ~FILE_A;
+        auto capL = (pawns >> 7) & ~FILE_H;
+        if ((capR & bitboard) || (capL & bitboard))
+            return true;
+    }
+
+    auto knights = p.bitboards[theircolor][KNIGHT];
+    while (knights) {
+        auto from    = PopLsb(knights);
+        auto targets = KNIGHT_ATTACKS[from];
+        if (targets & bitboard)
+            return true;
+    }
+
+    auto bishops = p.bitboards[theircolor][BISHOP];
+    while (bishops) {
+        auto from    = PopLsb(bishops);
+        auto targets = BishopAttacks(from, all);
+        if (targets & bitboard)
+            return true;
+    }
+
+    auto rooks = p.bitboards[theircolor][ROOK];
+    while (rooks) {
+        auto from    = PopLsb(rooks);
+        auto targets = RookAttacks(from, all);
+        if (targets & bitboard)
+            return true;
+    }
+
+    auto queens = p.bitboards[theircolor][QUEEN];
+    while (queens) {
+        auto from    = PopLsb(queens);
+        auto targets = QueenAttacks(from, all);
+        if (targets & bitboard)
+            return true;
+    }
+
+    return false;
+}
+
+static bool CheckLegal(const Position &p, const Move &m)
+{
+    const auto mycolor = p.whoseturn;
+    const auto newPos  = MakeMove(p, m);
+    const auto check   = IsCheck(newPos, mycolor);
+    return !check;
+}
+
 static int GenerateMoves(Position &p, std::array<Move, MAX_MOVES> &moves)
 {
     const auto mycolor    = p.whoseturn;
@@ -255,7 +318,8 @@ static int GenerateMoves(Position &p, std::array<Move, MAX_MOVES> &moves)
         moves[index].from  = static_cast<uint8_t>(from & 0xFF);
         moves[index].to    = static_cast<uint8_t>(to & 0xFF);
         moves[index].piece = piece;
-        index += 1;
+        if (CheckLegal(p, moves[index]))
+            index += 1;
     };
 
     const auto doTargets = [&](uint64_t targets, int add) {
