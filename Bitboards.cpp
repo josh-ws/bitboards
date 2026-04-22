@@ -13,7 +13,7 @@ inline constexpr int      ColOf(int bit) { return bit & 7; }
 inline constexpr int      RowOf(int bit) { return bit >> 3; }
 
 static constexpr int      MAX_MOVES   = 218; // https://chess.stackexchange.com/questions/4490/maximum-possible-movement-in-a-turn
-static constexpr int      PERFT_DEPTH = 6;
+static constexpr int      PERFT_DEPTH = 7;
 static constexpr uint64_t RANK_1      = 0x00000000000000FFULL;
 static constexpr uint64_t RANK_2      = 0x000000000000FF00ULL;
 static constexpr uint64_t RANK_3      = 0x0000000000FF0000ULL;
@@ -32,11 +32,13 @@ static constexpr uint64_t FILE_G      = 0x4040404040404040ULL;
 static constexpr uint64_t FILE_H      = 0x8080808080808080ULL;
 
 static std::array<uint64_t, 64>               KNIGHT_ATTACKS{};
-static std::array<uint64_t, 64>               DIAG;
-static std::array<uint64_t, 64>               ANTIDIAG;
+static std::array<uint64_t, 64>               KING_ATTACKS{};
 static std::array<std::array<uint8_t, 64>, 8> FIRST_RANK_ATTACKS{};
-static std::array<uint64_t, 8>                RANKS = {RANK_1, RANK_2, RANK_3, RANK_4, RANK_5, RANK_6, RANK_7, RANK_8};
-static std::array<uint64_t, 8>                FILES = {FILE_A, FILE_B, FILE_C, FILE_D, FILE_E, FILE_F, FILE_G, FILE_H};
+
+static std::array<uint64_t, 64> DIAG;
+static std::array<uint64_t, 64> ANTIDIAG;
+static std::array<uint64_t, 8>  RANKS = {RANK_1, RANK_2, RANK_3, RANK_4, RANK_5, RANK_6, RANK_7, RANK_8};
+static std::array<uint64_t, 8>  FILES = {FILE_A, FILE_B, FILE_C, FILE_D, FILE_E, FILE_F, FILE_G, FILE_H};
 
 constexpr static bool OnBoard(int col, int row)
 {
@@ -97,6 +99,23 @@ static void InitKnightAttacks()
         a |= (b & ~FILE_H) >> 15;
         a |= (b & ~FILE_A) >> 17;
         KNIGHT_ATTACKS[i] = a;
+    }
+}
+
+static void InitKingAttacks()
+{
+    for (int i = 0; i < 64; i++) {
+        uint64_t b = 1ULL << i;
+        uint64_t a = 0;
+        a |= (b & ~FILE_H) << 1;
+        a |= (b & ~FILE_H) << 7;
+        a |= b << 8;
+        a |= (b & ~FILE_A) << 9;
+        a |= (b & ~FILE_A) >> 1;
+        a |= (b & ~FILE_A) >> 7;
+        a |= b >> 8;
+        a |= (b & ~FILE_H) >> 9;
+        KING_ATTACKS[i] = a;
     }
 }
 
@@ -300,6 +319,14 @@ static int GenerateMoves(Position &p, std::array<Move, MAX_MOVES> &moves)
             emit(from, PopLsb(targets), QUEEN);
     }
 
+    auto kings = p.bitboards[mycolor][KING];
+    while (kings) {
+        auto from    = PopLsb(kings);
+        auto targets = KING_ATTACKS[from] & ~p.occupancy[mycolor];
+        while (targets)
+            emit(from, PopLsb(targets), KING);
+    }
+
     return index;
 }
 
@@ -328,6 +355,7 @@ int main()
 {
     InitFirstRankAttacks();
     InitKnightAttacks();
+    InitKingAttacks();
     InitDiag();
 
     assert(FIRST_RANK_ATTACKS[4][0] == 0b11101111);

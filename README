@@ -1,1 +1,11 @@
 Experiment with bitboards and move generation in Chess.
+
+Currently up to Perft(3) is correct
+
+Results:
+Perft(1): 20 (0ms)
+Perft(2): 400 (0ms)
+Perft(3): 8902 (0ms)
+Perft(4): 197754 (0ms) <- Needs checks
+Perft(5): 4890004 (10ms) <- Needs e.p.
+Perft(6): 120574902 (249ms)
