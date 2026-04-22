@@ -1,5 +1,5 @@
 CC=g++
-CFLAGS=-Og -g3 -march=native -Wall -Wextra --std=c++23
+CFLAGS=-O3 -march=native -g3 -march=native -Wall -Wextra --std=c++23
 DEPENDS=
 OUT=bitboards
 
