@@ -248,16 +248,18 @@ static bool IsCheck(const Position &p, uint8_t color)
     const auto bitboard   = p.bitboards[mycolor][KING];
     const auto all        = p.occupancy[WHITE] | p.occupancy[BLACK];
 
-    const auto pawns = p.bitboards[mycolor][PAWN];
+    const auto pawns = p.bitboards[theircolor][PAWN];
     if (mycolor == WHITE) {
-        auto capR = (pawns << 9) & ~FILE_A;
-        auto capL = (pawns << 7) & ~FILE_H;
+        // enemy (black) pawns attack via >>7 and >>9
+        auto capR = (pawns >> 7) & ~FILE_A;
+        auto capL = (pawns >> 9) & ~FILE_H;
         if ((capR & bitboard) || (capL & bitboard))
             return true;
     }
     else {
-        auto capR = (pawns >> 9) & ~FILE_A;
-        auto capL = (pawns >> 7) & ~FILE_H;
+        // enemy (white) pawns attack via <<7 and <<9
+        auto capR = (pawns << 9) & ~FILE_A;
+        auto capL = (pawns << 7) & ~FILE_H;
         if ((capR & bitboard) || (capL & bitboard))
             return true;
     }
@@ -337,18 +339,18 @@ static int GenerateMoves(Position &p, std::array<Move, MAX_MOVES> &moves)
         auto capL   = (pawns << 7) & ~FILE_H & p.occupancy[theircolor]; // captures (right)
         doTargets(single, -8);
         doTargets(dbl, -16);
-        doTargets(capR, -15);
-        doTargets(capL, -17);
+        doTargets(capR, -9);
+        doTargets(capL, -7);
     }
     else {
         auto single = (pawns >> 8) & empty;                             // single pawn moves
         auto dbl    = ((single & RANK_6) >> 8) & empty;                 // double pawn moves
-        auto capR   = (pawns >> 9) & ~FILE_A & p.occupancy[theircolor]; // captures (left)
-        auto capL   = (pawns >> 7) & ~FILE_H & p.occupancy[theircolor]; // captures (right)
+        auto capR   = (pawns >> 9) & ~FILE_H & p.occupancy[theircolor]; // captures (left)
+        auto capL   = (pawns >> 7) & ~FILE_A & p.occupancy[theircolor]; // captures (right)
         doTargets(single, 8);
         doTargets(dbl, 16);
-        doTargets(capR, 15);
-        doTargets(capL, 17);
+        doTargets(capR, 9);
+        doTargets(capL, 7);
     }
 
     auto knights = p.bitboards[mycolor][KNIGHT];
