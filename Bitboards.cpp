@@ -8,7 +8,7 @@
 using std::vector;
 
 static constexpr int      MAX_MOVES   = 218; // https://chess.stackexchange.com/questions/4490/maximum-possible-movement-in-a-turn
-static constexpr int      PERFT_DEPTH = 7;
+static constexpr int      PERFT_DEPTH = 6;
 static constexpr uint64_t RANK_1      = 0x00000000000000FFULL;
 static constexpr uint64_t RANK_2      = 0x000000000000FF00ULL;
 static constexpr uint64_t RANK_3      = 0x0000000000FF0000ULL;
@@ -26,6 +26,25 @@ static constexpr uint64_t FILE_F      = 0x2020202020202020ULL;
 static constexpr uint64_t FILE_G      = 0x4040404040404040ULL;
 static constexpr uint64_t FILE_H      = 0x8080808080808080ULL;
 
+static std::array<uint64_t, 64> KNIGHT_ATTACKS{};
+
+static void InitKnightAttacks()
+{
+    for (int i = 0; i < 64; i++) {
+        uint64_t b = 1ULL << i;
+        uint64_t a = 0;
+        a |= (b & ~FILE_H) << 17;
+        a |= (b & ~FILE_A) << 15;
+        a |= (b & ~(FILE_G | FILE_H)) << 10;
+        a |= (b & ~(FILE_A | FILE_B)) << 6;
+        a |= (b & ~(FILE_G | FILE_H)) >> 6;
+        a |= (b & ~(FILE_A | FILE_B)) >> 10;
+        a |= (b & ~FILE_H) >> 15;
+        a |= (b & ~FILE_A) >> 17;
+        KNIGHT_ATTACKS[i] = a;
+    }
+}
+
 enum Color : uint8_t {
     WHITE,
     BLACK,
@@ -38,6 +57,7 @@ enum PieceType : uint8_t {
     BISHOP,
     KNIGHT,
     ROOK,
+    NONE,
 };
 
 using Piece = uint8_t;
@@ -61,6 +81,7 @@ inline constexpr int PopLsb(uint64_t &b)
 struct Move {
     uint8_t from;
     uint8_t to;
+    uint8_t piece;
 };
 
 struct Position {
@@ -89,8 +110,29 @@ static Position CreateDefaultPosition()
     return p;
 }
 
-static void MakeMove(Position &, const Move &)
+static Position MakeMove(Position p, const Move &m)
 {
+    const auto mycolor    = p.whoseturn;
+    const auto theircolor = Color(mycolor ^ 1);
+    const auto from       = 1ULL << m.from;
+    const auto to         = 1ULL << m.to;
+    const auto move       = from ^ to;
+
+    p.bitboards[mycolor][m.piece] ^= move;
+    p.occupancy[mycolor] ^= move;
+
+    if (p.occupancy[theircolor] & to) {
+        for (int pt = 0; pt < 6; pt++) {
+            if (p.bitboards[theircolor][pt] & to) {
+                p.bitboards[theircolor][pt] ^= to;
+                break;
+            }
+        }
+        p.occupancy[theircolor] ^= to;
+    }
+
+    p.whoseturn = theircolor;
+    return p;
 }
 
 static void UndoMove(Position &)
@@ -105,15 +147,17 @@ static int GenerateMoves(Position &p, std::array<Move, MAX_MOVES> &moves)
 
     int index = 0;
 
-    const auto emit = [&](int from, int to) {
-        moves[index] = Move{static_cast<uint8_t>(from & 0xFF), static_cast<uint8_t>(to & 0xFF)};
+    const auto emit = [&](int from, int to, uint8_t piece) {
+        moves[index].from  = static_cast<uint8_t>(from & 0xFF);
+        moves[index].to    = static_cast<uint8_t>(to & 0xFF);
+        moves[index].piece = piece;
         index += 1;
     };
 
     const auto doTargets = [&](uint64_t targets, int add) {
         while (targets) {
             auto to = PopLsb(targets);
-            emit(to + add, to);
+            emit(to + add, to, PAWN);
         }
     };
 
@@ -128,23 +172,45 @@ static int GenerateMoves(Position &p, std::array<Move, MAX_MOVES> &moves)
         doTargets(capR, -15);
         doTargets(capL, -17);
     }
+    else {
+        auto single = (pawns >> 8) & empty;                             // single pawn moves
+        auto dbl    = ((single & RANK_6) >> 8) & empty;                 // double pawn moves
+        auto capR   = (pawns >> 9) & ~FILE_A & p.occupancy[theircolor]; // captures (left)
+        auto capL   = (pawns >> 7) & ~FILE_H & p.occupancy[theircolor]; // captures (right)
+        doTargets(single, 8);
+        doTargets(dbl, 16);
+        doTargets(capR, 15);
+        doTargets(capL, 17);
+    }
+
+    auto knights = p.bitboards[mycolor][KNIGHT];
+    while (knights) {
+        auto from    = PopLsb(knights);
+        auto targets = KNIGHT_ATTACKS[from] & ~p.occupancy[mycolor];
+        while (targets) {
+            int to = PopLsb(targets);
+            emit(from, to, KNIGHT);
+        }
+    }
 
     return index;
 }
 
-static uint64_t Perft(Position &p, std::array<Move, MAX_MOVES> &moves, int depth)
+static uint64_t Perft(Position &p, int depth)
 {
     if (depth <= 0)
         return 1;
 
-    int nmoves = GenerateMoves(p, moves);
+    std::array<Move, MAX_MOVES> moves;
+    int                         nmoves = GenerateMoves(p, moves);
+
     if (depth == 1)
         return nmoves;
 
     auto t = std::uint64_t(0);
     for (int i = 0; i < nmoves; i++) {
-        MakeMove(p, moves[i]);
-        t += Perft(p, moves, depth - 1);
+        auto newPos = MakeMove(p, moves[i]);
+        t += Perft(newPos, depth - 1);
         UndoMove(p);
     }
 
@@ -153,18 +219,16 @@ static uint64_t Perft(Position &p, std::array<Move, MAX_MOVES> &moves, int depth
 
 int main()
 {
-    auto position = CreateDefaultPosition();
-    auto moves    = std::array<Move, MAX_MOVES>();
-    auto numMoves = GenerateMoves(position, moves);
-    for (int i = 0; i < numMoves; ++i) {
-        const auto files   = "abcdefgh";
-        const auto rank    = "12345678";
-        auto       fromCol = moves[i].from % 8;
-        auto       fromRow = moves[i].from / 8;
-        auto       toCol   = moves[i].to % 8;
-        auto       toRow   = moves[i].to / 8;
-        const auto from    = std::format("{}{}", files[fromCol], rank[fromRow]);
-        const auto to      = std::format("{}{}", files[toCol], rank[toRow]);
-        std::cout << std::format("moves[{}]: {}{}\n", i, from, to);
+    InitKnightAttacks();
+
+    for (int i = 1; i <= PERFT_DEPTH; i++) {
+        auto       p       = CreateDefaultPosition();
+        const auto from    = std::chrono::steady_clock::now();
+        const auto result  = Perft(p, i);
+        const auto to      = std::chrono::steady_clock::now();
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(to - from);
+
+        const auto msg = std::format("Perft({}): {} ({})", i, result, elapsed);
+        std::cout << msg << "\n";
     }
 }
