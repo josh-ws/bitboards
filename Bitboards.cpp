@@ -1,11 +1,15 @@
 #include <array>
+#include <bit>
+#include <byteswap.h>
 #include <chrono>
 #include <cstdint>
 #include <format>
 #include <iostream>
 #include <vector>
 
-using std::vector;
+inline constexpr uint64_t BitOf(uint8_t col, uint8_t row) { return 1ULL << (row * 8 + col); }
+inline constexpr int      ColOf(int bit) { return bit & 7; }
+inline constexpr int      RowOf(int bit) { return bit >> 3; }
 
 static constexpr int      MAX_MOVES   = 218; // https://chess.stackexchange.com/questions/4490/maximum-possible-movement-in-a-turn
 static constexpr int      PERFT_DEPTH = 6;
@@ -27,6 +31,35 @@ static constexpr uint64_t FILE_G      = 0x4040404040404040ULL;
 static constexpr uint64_t FILE_H      = 0x8080808080808080ULL;
 
 static std::array<uint64_t, 64> KNIGHT_ATTACKS{};
+static std::array<uint64_t, 64> DIAG;
+static std::array<uint64_t, 64> ANTIDIAG;
+static std::array<uint64_t, 8>  RANKS = {RANK_1, RANK_2, RANK_3, RANK_4, RANK_5, RANK_6, RANK_7, RANK_8};
+static std::array<uint64_t, 8>  FILES = {FILE_A, FILE_B, FILE_C, FILE_D, FILE_E, FILE_F, FILE_G, FILE_H};
+
+constexpr static bool OnBoard(int col, int row)
+{
+    return col >= 0 && col < 8 && row >= 0 && row < 8;
+}
+
+static void InitDiag()
+{
+    for (int i = 0; i < 64; i++) {
+        const auto col = ColOf(i), row = RowOf(i);
+        auto       d = uint64_t(0);
+        auto       a = uint64_t(0);
+        // NE
+        for (int dc = 1, dr = 1; OnBoard(col + dc, row + dr); dc++, dr++)
+            d |= BitOf(col + dc, row + dr);
+        for (int dc = -1, dr = -1; OnBoard(col + dc, row + dr); dc--, dr--)
+            d |= BitOf(col + dc, row + dr);
+        for (int dc = -1, dr = 1; OnBoard(col + dc, row + dr); dc--, dr++)
+            a |= BitOf(col + dc, row + dr);
+        for (int dc = 1, dr = -1; OnBoard(col + dc, row + dr); dc++, dr--)
+            a |= BitOf(col + dc, row + dr);
+        DIAG[i]     = d;
+        ANTIDIAG[i] = a;
+    }
+}
 
 static void InitKnightAttacks()
 {
@@ -66,16 +99,26 @@ inline constexpr Piece     MakePiece(Color c, PieceType p) { return static_cast<
 inline constexpr PieceType TypeOf(Piece p) { return static_cast<PieceType>(p & 7); }
 inline constexpr Color     ColorOf(Piece p) { return static_cast<Color>(p >> 3); }
 
-inline constexpr uint64_t BitOf(uint8_t col, uint8_t row) { return 1ULL << (row * 8 + col); }
-inline constexpr int      ColOf(int bit) { return bit & 7; }
-inline constexpr int      RowOf(int bit) { return bit >> 3; }
-
 inline constexpr int Lsb(uint64_t b) { return std::countr_zero(b); }
 inline constexpr int PopLsb(uint64_t &b)
 {
     auto sq = std::countr_zero(b);
     b &= b - 1;
     return sq;
+}
+
+static uint64_t LineAttacks(uint64_t occ, uint64_t mask, uint64_t r)
+{
+    const auto o   = occ & mask;
+    const auto fwd = (o - 2 * r);
+    const auto rev = std::byteswap(std::byteswap(o) - 2 * std::byteswap(r));
+    return (fwd ^ rev) & mask;
+}
+
+static uint64_t BishopAttacks(int sq, uint64_t occ)
+{
+    const auto r = 1ULL << sq;
+    return LineAttacks(occ, DIAG[sq], r) | LineAttacks(occ, ANTIDIAG[sq], r);
 }
 
 struct Move {
@@ -144,6 +187,7 @@ static int GenerateMoves(Position &p, std::array<Move, MAX_MOVES> &moves)
     const auto mycolor    = p.whoseturn;
     const auto theircolor = p.whoseturn ^ BLACK;
     const auto empty      = ~(p.occupancy[WHITE] | p.occupancy[BLACK]);
+    const auto all        = p.occupancy[WHITE] | p.occupancy[BLACK];
 
     int index = 0;
 
@@ -187,10 +231,16 @@ static int GenerateMoves(Position &p, std::array<Move, MAX_MOVES> &moves)
     while (knights) {
         auto from    = PopLsb(knights);
         auto targets = KNIGHT_ATTACKS[from] & ~p.occupancy[mycolor];
-        while (targets) {
-            int to = PopLsb(targets);
-            emit(from, to, KNIGHT);
-        }
+        while (targets)
+            emit(from, PopLsb(targets), KNIGHT);
+    }
+
+    auto bishops = p.bitboards[mycolor][BISHOP];
+    while (bishops) {
+        auto from    = PopLsb(bishops);
+        auto targets = BishopAttacks(from, all) & ~p.occupancy[mycolor];
+        while (targets)
+            emit(from, PopLsb(targets), BISHOP);
     }
 
     return index;
@@ -220,6 +270,7 @@ static uint64_t Perft(Position &p, int depth)
 int main()
 {
     InitKnightAttacks();
+    InitDiag();
 
     for (int i = 1; i <= PERFT_DEPTH; i++) {
         auto       p       = CreateDefaultPosition();
