@@ -12,7 +12,7 @@ inline constexpr int      ColOf(int bit) { return bit & 7; }
 inline constexpr int      RowOf(int bit) { return bit >> 3; }
 
 static constexpr int      MAX_MOVES   = 218; // https://chess.stackexchange.com/questions/4490/maximum-possible-movement-in-a-turn
-static constexpr int      PERFT_DEPTH = 6;
+static constexpr int      PERFT_DEPTH = 7;
 static constexpr uint64_t RANK_1      = 0x00000000000000FFULL;
 static constexpr uint64_t RANK_2      = 0x000000000000FF00ULL;
 static constexpr uint64_t RANK_3      = 0x0000000000FF0000ULL;
@@ -186,6 +186,10 @@ struct Move {
     uint8_t piece;
 };
 
+struct Undo {
+    uint8_t cap;
+};
+
 struct Position {
     uint64_t bitboards[2][6]{};
     uint64_t occupancy[2]{};
@@ -212,7 +216,7 @@ static Position CreateDefaultPosition()
     return p;
 }
 
-static Position MakeMove(Position p, const Move &m)
+static void MakeMove(Position &p, const Move &m, Undo &u)
 {
     const auto mycolor    = p.whoseturn;
     const auto theircolor = Color(mycolor ^ 1);
@@ -223,10 +227,12 @@ static Position MakeMove(Position p, const Move &m)
     p.bitboards[mycolor][m.piece] ^= move;
     p.occupancy[mycolor] ^= move;
 
+    u.cap = NONE;
     if (p.occupancy[theircolor] & to) {
         for (int pt = 0; pt < 6; pt++) {
             if (p.bitboards[theircolor][pt] & to) {
                 p.bitboards[theircolor][pt] ^= to;
+                u.cap = PieceType(pt);
                 break;
             }
         }
@@ -234,11 +240,23 @@ static Position MakeMove(Position p, const Move &m)
     }
 
     p.whoseturn = theircolor;
-    return p;
 }
 
-static void UndoMove(Position &)
+static void UndoMove(Position &p, const Move &m, const Undo &u)
 {
+    const auto theircolor = p.whoseturn;
+    const auto mycolor    = Color(theircolor ^ 1);
+    const auto from       = 1ULL << m.from;
+    const auto to         = 1ULL << m.to;
+    const auto move       = from ^ to;
+
+    p.whoseturn = mycolor;
+    p.bitboards[mycolor][m.piece] ^= move;
+    p.occupancy[mycolor] ^= move;
+    if (u.cap != NONE) {
+        p.bitboards[theircolor][u.cap] ^= to;
+        p.occupancy[theircolor] ^= to;
+    }
 }
 
 static bool IsCheck(const Position &p, uint8_t color)
@@ -299,11 +317,14 @@ static bool IsCheck(const Position &p, uint8_t color)
     return false;
 }
 
-static bool CheckLegal(const Position &p, const Move &m)
+static bool CheckLegal(Position &p, const Move &m)
 {
     const auto mycolor = p.whoseturn;
-    const auto newPos  = MakeMove(p, m);
-    const auto check   = IsCheck(newPos, mycolor);
+
+    Undo undo;
+    MakeMove(p, m, undo);
+    const auto check = IsCheck(p, mycolor);
+    UndoMove(p, m, undo);
     return !check;
 }
 
@@ -408,10 +429,13 @@ static uint64_t Perft(Position &p, int depth)
         return nmoves;
 
     auto t = std::uint64_t(0);
+
+#pragma omp parallel for reduction(+ : t) schedule(dynamic, 1)
     for (int i = 0; i < nmoves; i++) {
-        auto newPos = MakeMove(p, moves[i]);
-        t += Perft(newPos, depth - 1);
-        UndoMove(p);
+        Position np = p;
+        Undo     undo;
+        MakeMove(np, moves[i], undo);
+        t += Perft(np, depth - 1);
     }
 
     return t;

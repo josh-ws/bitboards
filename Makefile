@@ -1,5 +1,5 @@
 CC=clang++
-CFLAGS=-O3 -g3 -march=native -mtune=native -Wall -Wextra --std=c++23
+CFLAGS=-O3 -g3 -march=native -mtune=native -Wall -Wextra --std=c++23 -fopenmp
 DEPENDS=
 OUT=bitboards
 
